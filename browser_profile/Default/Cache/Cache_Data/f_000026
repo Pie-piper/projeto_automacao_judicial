@@ -1,0 +1,917 @@
+$(function() {
+
+    var count_pages = 0;
+    var countMidias = 0;
+    var $tree, $treeSigilosos, $nuProcesso, $cdProcessoPrinc, $nuRecurso, $origemDocumento;
+    var $jsTreePrincipal = $('#arvore_principal');
+    var $jsTreeSigilosos = $('#arvore_sigilosos');
+    var $jsTreeDependentes = $('#arvore_dependentes');
+    var $jsTreeApensos = $('#arvore_apensos');
+    var idPaginaAtual;
+
+    $.saj = $.saj || {};
+    $.saj.pasta = $.saj.pasta || {};
+
+    /**
+     * Aplica patch de uncheck_all otimizado em uma instância específica do jsTree
+     * Substitui o método para evitar stack overflow em DOMs grandes
+     */
+    $.saj.pasta.aplicarPatchUncheckAll = function(treeInstance) {
+        if (!treeInstance || !treeInstance.uncheck_all) return;
+        treeInstance.uncheck_all = function() {
+            if(this.settings.checkbox.tie_selection) { 
+                return this.deselect_all(); 
+            }
+            var tmp = this._data.checkbox.selected.concat([]), i, j;
+            for(i = 0, j = this._data.checkbox.selected.length; i < j; i++) {
+                if(this._model.data[this._data.checkbox.selected[i]]) {
+                    this._model.data[this._data.checkbox.selected[i]].state.checked = false;
+                }
+            }
+            this._data.checkbox.selected = [];
+            var element = this.element[0];
+            if (element) {
+                var checkedElements = element.querySelectorAll('.jstree-checked');
+                checkedElements.forEach(function(el) {
+                    el.classList.remove('jstree-checked');
+                });
+            }
+            this.trigger('uncheck_all', { 'selected': this._data.checkbox.selected, 'node': tmp });
+            return true;
+        };
+    };
+
+    $.saj.pasta.selecionarTodos = function(tree) {
+        var elems = tree.element.find('a.jstree-anchor');
+        var todosSelecionados = elems.size() == elems.filter('.jstree-checked').size();
+        if(todosSelecionados) {
+            return false;
+        }
+        var tempRedraw = tree.redraw;
+        tree.redraw = jQuery.noop;
+        elems.addClass('jstree-checked');
+        tree.check_all();
+        tree.redraw = tempRedraw;
+    };
+
+    var binds = function() {
+        $("#selecionarButton").click(function() {
+            $.saj.pasta.selecionarTodos($tree);
+            $.saj.pasta.selecionarTodos($treeSigilosos);
+        });
+        $("#desmarcarButton").click(function() {
+            $tree.uncheck_all();
+            $treeSigilosos.uncheck_all();
+        });
+        var $toggleArvoreButton = $("#toggleArvoreButton");
+        var abrirArvore = function() {
+            $tree.open_all();
+            $treeSigilosos.open_all();
+            $.saj.pasta.adicionarAtributosAcessibilidade();
+            $toggleArvoreButton.off();
+            $toggleArvoreButton.prop('src', 'imagens/pasta/compress.svg');
+            $toggleArvoreButton.on('click', fecharArvore);
+        };
+        var fecharArvore = function() {
+            $tree.close_all();
+            $treeSigilosos.close_all();
+            $.saj.pasta.adicionarAtributosAcessibilidade();
+            $toggleArvoreButton.off();
+            $toggleArvoreButton.prop('src', 'imagens/pasta/expand.svg');
+            $toggleArvoreButton.on('click', abrirArvore);
+        };
+        $toggleArvoreButton.on('click', fecharArvore);
+        $toggleArvoreButton.adicionaMouseEventos();
+
+        $("#ultimaPaginaButton").click(selecionarUltimaPagina);
+        $("#primeiraPaginaButton").click(selecionarPrimeiraPagina);
+        $("#campoPaginaAtual,#campoPaginaAtual_enc").bind('keypress', irParaPagina);
+        $("#campoPaginaAtual,#campoPaginaAtual_enc").blur(irParaPagina);
+    }
+
+    var bindBotoesSuperiores = function(sequencial) {
+        $('#paginaAnteriorButton,#paginaAnteriorButton_enc').off().on('click', function () {
+            irParaPaginaAnterior(sequencial);
+        });
+        $('#paginaPosteriorButton,#paginaPosteriorButton_enc').off().on('click', function () {
+            irParaPaginaPosterior(sequencial);
+        });
+    }
+
+    var irParaPagina = function(e) {
+        if (e.keyCode !== 13 && e.keyCode !== 9 && e.type === 'keypress') {
+            return;
+        }
+
+        var paginaAtual;
+        if (e.target == $('#campoPaginaAtual')[0]) {
+            paginaAtual = $('#campoPaginaAtual').val();
+            $('#campoPaginaAtual_enc').val(paginaAtual);
+        } else {
+            paginaAtual = $('#campoPaginaAtual_enc').val();
+            $('#campoPaginaAtual').val(paginaAtual);
+        }
+
+        var paginaAntiga = $('#campoPaginaAtual').attr("paginaAntiga");
+        if (paginaAntiga === paginaAtual) {
+            return;
+        } else {
+            $('#campoPaginaAtual').attr("paginaAntiga", paginaAtual);
+        }
+
+        var numTotalPaginas = new Number($('#numTotalPaginas').text());
+
+        if (paginaAtual > numTotalPaginas || paginaAtual < 1) {
+            alert(dict['pastadigital.arvore.alert.pagina.invalida']);
+            return;
+        }
+        $tree.deselect_all();
+        $tree.select_node('li[id^=pagina_' + paginaAtual + '_]');
+    };
+
+    var habilitarTodosBotoesNavegacao = function() {
+        $("#paginaAnteriorButton")[0].style.display = '';
+        $("#paginaAnteriorButtonDes")[0].style.display = 'none';
+
+        $("#primeiraPaginaButton")[0].style.display = '';
+        $("#primeiraPaginaButtonDes")[0].style.display = 'none';
+
+        $("#paginaPosteriorButton")[0].style.display = '';
+        $("#paginaPosteriorButtonDes")[0].style.display = 'none';
+
+        $("#ultimaPaginaButton")[0].style.display = '';
+        $("#ultimaPaginaButtonDes")[0].style.display = 'none';
+    };
+
+    var isDocumentoMidiaDigital = function (documento) {
+        return documento && documento.urlMidiaDigital;
+    };
+
+    var obterUrlDocumento = function(parametros) {
+        var IE8ouInferior = $.browser.msie && parseInt($.browser.version, 10) <= 8;
+        var modoAcessibilidade = getURLParameter(window.location.href, 'acessibilidade') === 'true';
+        if (IE8ouInferior || modoAcessibilidade) {
+            return "getPDF.action?" + parametros;
+        }
+        return "js/viewer/web/viewer.html?file=" + encodeURIComponent(rootAplicacao + "/getPDF.do?" + parametros);
+    }
+
+    var getURLParameter = function (url, name) {
+        return decodeURIComponent((new RegExp('[?|&]' + name + '=' + '([^&;]+?)(&|#|;|$)').exec(url) || [, ""])[1].replace(/\+/g, '%20')) || null
+    }
+
+    var ajustarVisualizacaoTreeDependentes = function() {
+        var urlpath = window.location.pathname;
+        if (urlpath.indexOf('abrirDocumentoParaConferencia') >= 0 || urlpath.indexOf('abrirDocumentoEdt') >= 0) {
+            $('#arvore_dependentes,#arvore_apensos').hide();
+            return;
+        }
+        if ($nuProcesso) {
+            var recurso = $nuRecurso === '00000' ? '' : '/' + $nuRecurso;
+            $('#proc_principal').text($nuProcesso + recurso);
+            $('#arvore_dependentes,#arvore_apensos').show();
+        }
+    }
+
+    var validarAberturaIntimacaoNaoRecebida = function (event, elemento, documento) {
+        event.preventDefault();
+        $.ajax({
+            url: 'validarAberturaIntimacaoNaoRecebida.do',
+            async: false,
+            method: 'POST',
+            data: {
+              parametros: documento.parametros,
+            },
+            success: function () {
+                exibirDocumento(documento);
+            },
+            error: function (response) {
+                abrirPopupRecebimentoIntimacaoNaoRecebida(JSON.parse(response.responseText), documento, elemento);
+            }
+        });
+    };
+
+    const abrirPopupRecebimentoIntimacaoNaoRecebida = (data, documento, elemento) => {
+        if (data.exibirBotaoConfirmarRecebimento) {
+            $.saj.certificado.inicializar().then(function () {
+              mostrarModalRecebimentoIntimacao(data, documento, elemento);
+            }).catch(function(error) {
+              console.error('Erro ao inicializar certificado:', error);
+              mostrarModalRecebimentoIntimacao(data, documento, elemento);
+            });
+        } else {
+            mostrarModalRecebimentoIntimacao(data, documento, elemento);
+        }
+    };
+
+    const mostrarModalRecebimentoIntimacao = (data, documento, elemento) => {
+        $.saj.popupModal($('#modalRecebimentoIntimacao'), {
+            mostrarBotaoFechar: true,
+            titulo: !data.exibirBotaoConfirmarRecebimento ? dict['pastadigital.intimacao.tituloPopupRecebimentoIntimacaoPendente'] : dict['pastadigital.intimacao.tituloPopupRecebimentoIntimacao'],
+            altura: 175,
+            largura: 600,
+            antesDeMostrarPopup: function () {
+                $('.div-conteudo').attr('aria-hidden', 'true');
+                $('#popupModalDiv').attr('role', 'document');
+                $('#popupModalBotaoFechar').focus();
+                $('#botaoFecharPopupRecebimentoIntimacao').click(function () {
+                    $.saj.pasta.acoesCallback('');
+                    $.saj.closePopupModal()
+                });
+                $('#conteudoModalRecebimentoIntimacao').html(data.mensagemValidacao);
+                const botaoFecharPopup = $('#botaoFecharPopupRecebimentoIntimacao')
+                if (!data.exibirBotaoConfirmarRecebimento) {
+                    $('#botaoConfirmarRebebimentoIntimacao').css('display', 'none');
+                    $('#campoCertificado').css('display', 'none');
+                    botaoFecharPopup.text(dict['pastadigital.intimacao.input.value.ok']);
+                } else {
+                    botaoFecharPopup.text(dict['pastadigital.intimacao.input.value.cancelar']);
+                    const botaoConfirmarRebebimentoIntimacao = $('#botaoConfirmarRebebimentoIntimacao');
+                    if (!botaoConfirmarRebebimentoIntimacao.data('click-bound')) {
+                        botaoConfirmarRebebimentoIntimacao.data('click-bound', true);
+                        botaoConfirmarRebebimentoIntimacao.click(function () {
+                            obterHashesParaAssinatura(documento, elemento);
+                        });
+                    }
+                }
+            }
+        });
+    };
+
+    const obterHashesParaAssinatura = (documento, elemento) => {
+        $.saj.certificado.getCertificado(function (certificadoBase64) {
+            $.ajax({
+                url: 'obterHashsParaAssinatura.do',
+                async: false,
+                method: 'POST',
+                data: {
+                    parametros: documento.parametros,
+                    assinatura: certificadoBase64,
+                },
+                dataType: 'json',
+                success: function (hashes) {
+                    $.saj.certificado.assinarLista(hashes, function (signatures) {
+                        receberIntimacao(signatures, elemento, documento)
+                    });
+                },
+                error: function (response) {
+                    exibirMensagemErroProtocoladora(response);
+                }
+            });
+        });
+    };
+
+    const receberIntimacao = (signatures, elemento, documento) => {
+        $.ajax({
+            url: 'receberIntimacao.do',
+            async: false,
+            method: 'POST',
+            data: {
+                hashesParaAssinatura: signatures[0],
+            },
+            headers: {'X-CSRF-Token': $("input[name='_csrf']").attr("value")},
+            success: function () {
+                $.saj.closePopupModal();
+                exibirDocumento(documento);
+            },
+            error: function (response) {
+                $.saj.pasta.acoesCallback('');
+                exibirMensagemErroProtocoladora(response);
+            }
+        });
+    };
+
+    const exibirMensagemErroProtocoladora = (response) => {
+        $('#spwTabelaMensagem').css('display', 'table');
+        if (response.status === 503) {
+            $('#mensagemErroProtocoladora').html(JSON.parse(response.responseText))
+        }
+    }
+
+    var exibirDocumento = function(documento) {
+        idPaginaAtual = documento.id;
+        $.ajax({
+            url: "recuperaAssinaturas.do?" + documento.parametros,
+            success: function (html) {
+                $("#divAssinaturas").html(html);
+                $("#linhaAssinaturasEncolhido").html(html);
+                $.saj.pasta.acoesCallback(documento);
+            },
+            error: function (response) {
+                if (response && response.status === 415) {
+                    $('#documento')[0].src = "falhaAoConverterDocumentoRTF.do?" + documento.parametros;
+                }
+            }
+        });
+    };
+
+    var baixarMidia = function (urlMidia) {
+        window.open(urlMidia, '_self');
+    };
+
+    var criarPaginaDocumento = function (doc, countPages) {
+        return {
+            id: 'pagina_' + doc.indicePagina + '_cont_' + countPages,
+            text: doc.title,
+            icon: false,
+            midia: false,
+            indicePagina: doc.indicePagina, //numero da página
+            tramitacao: doc.tramitacao,
+            possuiDocumentoOriginal: doc.possuiDocumentoOriginal,
+            materializar: doc.materializar,
+            nuPaginas: doc.nuPaginas,
+            parametros: doc.parametros,
+            flProcVirtual: doc.flProcVirtual,
+            documentoSigiloso: doc.documentoSigiloso,
+            flAssinado: doc.flAssinado,
+            iconesAss: doc.iconesAss,
+            id_paginacao: doc.id_paginacao,
+            paginaInicial: doc.paginaInicial,
+            title: doc.title,
+            sequencialPagina: countPages,
+            urlDocumento: obterUrlDocumento(doc.parametros),
+        }
+    };
+
+    var criarMidiaDocumento = function (doc, countMidias) {
+        return {
+            id: 'midia_' + doc.indicePagina + '_cont_' + countMidias,
+            text: doc.title,
+            icon: doc.icon,
+            midia: true,
+            a_attr: {'class': 'no_checkbox'},
+            li_attr: {'class': 'midia'},
+            urlMidiaDigital: doc.urlMidiaDigital
+        }
+    };
+
+    var obterPaginasDocumento = function(pastas) {
+        var itens = [], pagina;
+        $.each(pastas, function(key, val) {
+            var doc = val.data;
+            var isMidia = isDocumentoMidiaDigital(doc);
+            var pagina;
+
+            if (!isMidia) {
+                $nuProcesso = getURLParameter(doc.parametros, 'nuProcesso');
+                $nuRecurso = getURLParameter('&' + doc.parametros, 'nuSeqRecurso');
+                $cdProcessoPrinc = getURLParameter(doc.parametros, 'cdProcesso');
+                $origemDocumento = getURLParameter(doc.parametros, 'origemDocumento');
+                pagina = criarPaginaDocumento(doc, count_pages);
+                count_pages++;
+            } else {
+                pagina = criarMidiaDocumento(doc, countMidias);
+                countMidias++;
+            }
+
+            itens.push(pagina);
+        });
+        return itens;
+    };
+
+    var obterPastaDocumentos = function(data) {
+        var itens = [];
+        var pastaDocumentos;
+        $.each(data, function(key, val) {
+            var documento = val.data;
+            var primeiraPagina = val.children[0];
+            var dadosPrimeiraPagina = !primeiraPagina ? documento : primeiraPagina.data;
+            pastaDocumentos = {
+                id: 'pasta_' + documento.cdDocumento,
+                text: documento.title,
+                type: 'directory',
+                title: documento.title,
+                icon: documento.icon,
+                midia: false,
+                flPeticaoInicial: documento.flPeticaoInicial,
+                sigiloAbsoluto: documento.sigiloAbsoluto,
+                cdDocumento: documento.cdDocumento,
+                dtInclusao: documento.dtInclusao,
+                cdProcessoOrigem: documento.cdProcessoOrigem,
+                cdTipoDocDigital: documento.cdTipoDocDigital,
+                children: obterPaginasDocumento(val.children, documento.cdDocumento),
+                indicePagina: dadosPrimeiraPagina.indicePagina,
+                parametros: dadosPrimeiraPagina.parametros,
+                urlDocumento: obterUrlDocumento(dadosPrimeiraPagina.parametros),
+                state: {
+                    opened: true
+                }
+            };
+            if (documento.sigiloAbsoluto) {
+                pastaDocumentos.a_attr = {'class': 'disabled-node'};
+                pastaDocumentos.text = window.saj.traducoes.documentoReservado;
+            }
+
+            itens.push(pastaDocumentos);
+        });
+        return itens;
+    }
+
+    var getIdsNodosMidias = function (selected) {
+        return _.map($(selected.event.currentTarget.parentNode).siblings().find('a.no_checkbox .jstree-checkbox').parent(), function (e) {
+            return $(e).attr('id');
+        });
+    };
+
+    var controlarSelecaoMidias = function (selected, selecionar) {
+        if (selected.node.original.midia || 'directory' === selected.node.original.type) {
+            return;
+        }
+
+        selected.instance[selecionar ? 'check_node' : 'uncheck_node'](getIdsNodosMidias(selected));
+    };
+
+    $jsTreePrincipal.jstree({
+        core: {
+            data: obterPastaDocumentos(requestScope)
+        },
+        checkbox: {
+            tie_selection: false,
+            whole_node: false
+        },
+        plugins: ['checkbox', 'wholerow']
+
+    }).on('loaded.jstree', function() {
+        $tree = $jsTreePrincipal.jstree(true);
+        $.saj.pasta.aplicarPatchUncheckAll($tree);
+        ajustarVisualizacaoTreeDependentes();
+        selecionarPrimeiraPaginaDoUltimoDocumento();
+        $.saj.pasta.adicionarAtributosAcessibilidade();
+        $.saj.pasta.ajustarOrientacoesAcessoPasta();
+        binds();
+    }).on('select_node.jstree', function(e, data) {
+        if (data.node.original.sigiloAbsoluto) {
+            $jsTreePrincipal.jstree(true).deselect_node(data.node);
+
+        } else if (!isDocumentoMidiaDigital(data.node.original)) {
+            $('#campoPaginaAtual,#campoPaginaAtual_enc').val(data.node.original.indicePagina);
+            bindBotoesSuperiores(data.node.original.sequencialPagina);
+            validarAberturaIntimacaoNaoRecebida(e, this, data.node.original)
+            ajustarEstadoBotoesNavegacao();
+
+        } else {
+            baixarMidia(data.node.original.urlMidiaDigital);
+        }
+
+    }).on('after_open.jstree', function(){
+        $.saj.pasta.adicionaAtributosAposExpandirRecolher($(this));
+    }).on('after_close.jstree', function(){
+        $.saj.pasta.adicionaAtributosAposExpandirRecolher($(this));
+    }).on('check_node.jstree', function (node, selected) {
+        controlarSelecaoMidias(selected, true);
+    }).on('uncheck_node.jstree', function (node, selected) {
+        controlarSelecaoMidias(selected, false);
+    });
+
+    $jsTreeSigilosos.jstree({
+        core: {
+            data: obterPastaDocumentos(requestScopeArvoreSigilosos),
+        },
+        checkbox: {
+            tie_selection: false,
+            whole_node: false
+        },
+        plugins: ['checkbox', 'wholerow']
+    }).on('loaded.jstree', function() {
+        $treeSigilosos = $jsTreeSigilosos.jstree(true);
+        $.saj.pasta.aplicarPatchUncheckAll($treeSigilosos);
+        carregarOuOmitirDivSigilosos();
+        selecionarPrimeiraPaginaDoUltimoDocumento();
+        $.saj.pasta.adicionarAtributosAcessibilidade();
+        $.saj.pasta.ajustarOrientacoesAcessoPasta();
+    }).on('select_node.jstree', function(e, data) {
+        if (!isDocumentoMidiaDigital(data.node.original)) {
+            validarAberturaIntimacaoNaoRecebida(e, this, data.node.original)
+            return;
+        }
+        baixarMidia(data.node.original.urlMidiaDigital);
+    }).on('after_open.jstree', function(){
+        $.saj.pasta.adicionaAtributosAposExpandirRecolher($(this));
+    }).on('after_close.jstree', function(){
+        $.saj.pasta.adicionaAtributosAposExpandirRecolher($(this));
+    }).on('check_node.jstree', function (node, selected) {
+        controlarSelecaoMidias(selected, true);
+    }).on('uncheck_node.jstree', function (node, selected) {
+        controlarSelecaoMidias(selected, false);
+    });
+
+    var getInstancia = function () {
+        return getURLParameter(window.location.href, 'flOrigem');
+    };
+
+    var isInstanciaPG = function () {
+        return getInstancia() === 'P';
+    };
+
+    var getUrlCpo = function () {
+        return isInstanciaPG() ? window.saj.pasta.urlCpoPg : window.saj.pasta.urlCpoSg
+    };
+
+    abrirPastaDigital = function (link) {
+        var cdProcesso = link.attr('id');
+        var arvore = $(link).parents('[id^="arvore_"]').jstree(true);
+        var nodo = arvore.get_node('dp_' + cdProcesso);
+
+        var servico = getUrlCpo();
+        var urlPastaDependente = servico + '/abrirPastaDigitalProcessoDependente.do?cdProcesso=' + cdProcesso + '&origemPasta=true&chave=';
+
+        $.ajax({
+            url: servico + '/obterAcessoDoUsuario.do?novaAba=true',
+            success: function (acesso) {
+                if (acesso || nodo.original.chave) {
+                    return window.open(urlPastaDependente + nodo.original.chave, '_blank');
+                }
+
+                $.saj.popupModal($('#popupSenha'), {
+                    mostrarBotaoFechar: false,
+                    titulo: dict['pastadigital.arvore.titulo.digite.senha.processo'],
+                    altura: '230',
+                    largura: '480',
+                    antesDeMostrarPopup: function () {
+                        $('#div-conteudo').attr('aria-hidden', 'true');
+                        var $senhaProcesso = $('#senhaProcesso');
+                        $senhaProcesso.val('');
+                        $senhaProcesso.attr('aria-label', dict['pastadigital.arvore.label.senha.processo']).focus();
+                    },
+                    onBeforeClosePopupModal: function () {
+                        $('#div-conteudo').attr('aria-hidden', 'false');
+                    }
+                });
+                $('#conteudoAvisoSenhaIncorreta').hide();
+                $('#botaoEnviarSenha').off('click').on('click', function () {
+
+                    $.ajax({
+                        type: 'POST',
+                        url: servico + '/validarSenhaProcessoPastaDigital.do',
+                        data: {
+                            senhaDoProcessoDigitada: $('#senhaProcesso').val(),
+                            cdProcesso: cdProcesso
+                        },
+                        success: function () {
+                            nodo.original.chave = $('#senhaProcesso').val();
+                            $.saj.closePopupModal();
+                            return window.open(urlPastaDependente + nodo.original.chave, '_blank');
+                        },
+                        error: function () {
+                            definirMensagemErroSenha(arguments[0].responseText);
+                            $('#conteudoAvisoSenhaIncorreta').show();
+                        }
+                    });
+                });
+                $('#botaoFecharPopupSenha').off('click').on('click', function () {
+                    $.saj.closePopupModal();
+                });
+            },
+            crossDomain: true,
+            xhrFields: {
+                withCredentials: true
+            },
+            data: {
+                cdProcesso: cdProcesso,
+                origemDoc: $origemDocumento,
+                instancia: getInstancia()
+            }
+        });
+    };
+
+    var carregarOuOmitirDivSigilosos = function() {
+        if ($("#divSigilosos ul").is(":empty")) {
+            $("#divTarjaSigilosos, #divSigilosos").hide();
+            $("#divScroll").removeClass("comSigilosos");
+            return;
+        }
+        $("#divTarjaSigilosos, #divSigilosos").show();
+        $("#divScroll").addClass("comSigilosos");
+    };
+
+    var bloquearBotoesAnteriorEPrimeiraPagina = function() {
+        $("#paginaAnteriorButton")[0].style.display = 'none';
+        $("#paginaAnteriorButtonDes")[0].style.display = '';
+
+        $("#primeiraPaginaButton")[0].style.display = 'none';
+        $("#primeiraPaginaButtonDes")[0].style.display = '';
+    };
+
+    var bloquearBotoesPosteriorEUltimaPagina = function() {
+        $("#paginaPosteriorButton")[0].style.display = 'none';
+        $("#paginaPosteriorButtonDes")[0].style.display = '';
+
+        $("#ultimaPaginaButton")[0].style.display = 'none';
+        $("#ultimaPaginaButtonDes")[0].style.display = '';
+    };
+
+    var ehUltimaPagina = function () {
+        return !obterProximoDocumentoPdfDaArvore(1);
+    }
+
+    var ehPrimeiraPagina = function () {
+        return !obterProximoDocumentoPdfDaArvore(-1);
+    }
+
+    var ajustarEstadoBotoesNavegacao = function () {
+        habilitarTodosBotoesNavegacao();
+        if (ehPrimeiraPagina()) {
+            bloquearBotoesAnteriorEPrimeiraPagina();
+        }
+        if (ehUltimaPagina()) {
+            bloquearBotoesPosteriorEUltimaPagina();
+        }
+    }
+
+    var seletorPagina = function(indice) {
+        return $jsTreePrincipal.find('li[id$=cont_' + indice + ']:not(.midia)');
+    }
+
+    var irParaPaginaAnterior = function(cont) {
+        var idPrimeiroElementoDaArvore = seletorPagina(cont).parents('li').siblings('li:first').attr('id');
+        if (seletorPagina(cont).attr('id') === idPrimeiroElementoDaArvore) {
+            return;
+        }
+
+        selecionarProximoDocumentoPdfDaArvore(-1);
+    };
+
+    var selecionarProximoDocumentoPdfDaArvore = function (sentidoDaBusca) {
+        var documento = obterProximoDocumentoPdfDaArvore(sentidoDaBusca);
+        if (!documento) {
+            return;
+        }
+        $tree.deselect_all();
+        $tree.select_node(documento.id);
+    };
+
+    var obterProximoDocumentoPdfDaArvore = function (sentidoDaBusca) {
+        var proximoElementoDaArvore;
+        var idProximoElemento = +extrairIndiceDoIdDocumentoDaPagina(idPaginaAtual) + sentidoDaBusca;
+        for (proximoElementoDaArvore = $tree.get_node(seletorPagina(idProximoElemento).attr('id'));
+             !isProximoElementoDaArvoreUmPdfValido(proximoElementoDaArvore);
+             proximoElementoDaArvore = $tree.get_node(seletorPagina(idProximoElemento += sentidoDaBusca).attr('id'))) ;
+        return proximoElementoDaArvore;
+    };
+
+    var isProximoElementoDaArvoreUmPdfValido = function (proximoElementoDaArvore) {
+        let original = proximoElementoDaArvore.original;
+        if (original && original.sigiloAbsoluto) {
+            return false;
+        }
+        return !proximoElementoDaArvore || !isDocumentoMidiaDigital(original);
+    };
+
+    var extrairIndiceDoIdDocumentoDaPagina = function (indiceOuIdentificador) {
+        return indiceOuIdentificador.toString().replace(/\w*cont_/, "");
+    };
+
+    var irParaPaginaPosterior = function(cont) {
+        if(cont === undefined){
+            return;
+        }
+        var idUltimoElementoDaArvore = seletorPagina(cont).parents('li').siblings('li:last').attr('id');
+        if (seletorPagina(cont).attr('id') === idUltimoElementoDaArvore) {
+            return;
+        }
+
+        selecionarProximoDocumentoPdfDaArvore(1);
+    };
+
+    var selecionarPrimeiraPaginaDoUltimoDocumento = function() {
+        $tree = $jsTreePrincipal.jstree(true);
+        var primeiroDocUltimoBloco;
+        var somenteSigiloso = $tree._cnt === 0;
+        if (somenteSigiloso) {
+            primeiroDocUltimoBloco = $jsTreeSigilosos.find('ul > li[id^="pasta_"]:last').find('li:first');
+        } else {
+            primeiroDocUltimoBloco = $jsTreePrincipal.find('ul > li[id^="pasta_"]:last').find('li:first');
+        }
+        primeiroDocUltimoBloco.find('a').addClass('paginaVisivel');
+        idPaginaAtual = primeiroDocUltimoBloco.attr('id');
+        if (somenteSigiloso) {
+            if($treeSigilosos !== undefined && primeiroDocUltimoBloco.attr('id')) {
+                $treeSigilosos.select_node(primeiroDocUltimoBloco.attr('id'));
+            }
+        } else {
+            if (primeiroDocUltimoBloco.attr('id')) {
+                $tree.select_node(primeiroDocUltimoBloco.attr('id'));
+            }
+        }
+        posicionaScrollNoFinal();
+    }
+
+    var obterIdUltimoPdfDaArvore = function (){
+        idPaginaAtual = $jsTreePrincipal.find('ul > li').not('.midia').last().attr('id');
+        return $tree.get_node(idPaginaAtual).id;
+    }
+
+    var selecionarUltimaPagina = function() {
+        $tree.deselect_all();
+        $tree.select_node(obterIdUltimoPdfDaArvore());
+        posicionaScrollNoFinal();
+    }
+
+    var selecionarPrimeiraPagina = function() {
+        $tree.deselect_all();
+        var primeiroElemento = $jsTreePrincipal.find('ul > li:first > ul > li:first');
+        primeiroElemento.find('a').addClass('paginaVisivel');
+        $tree.select_node(primeiroElemento.attr('id'));
+        posicionaScrollNoInicio();
+    };
+
+    var posicionaScrollNoFinal = function () {
+        $('#divScroll').scrollTop(9999999);
+    }
+
+    var posicionaScrollNoInicio = function () {
+        $('#divScroll').scrollTop(0);
+    }
+
+    var gerarArvoreDependente = function ($arvore, descricao, tipo, texto) {
+        $arvore.jstree({
+            core: {
+                data: function (node, cb) {
+
+                    if (node.id === '#') { //Root node
+                        cb([{'text': texto, 'id': 'id_tree_' + descricao, 'children': true, 'icon': false}]);
+                        return;
+                    }
+
+                    var nodeRaiz = node.id === 'id_tree_' + descricao;
+                    var urlRaiz = getUrlCpo();
+
+                    if (nodeRaiz) { //ajax de processos
+                        var cdProcesso = $cdProcessoPrinc;
+                        $.ajax({
+                            url: urlRaiz + '/obterProcessosDependentesDoUsuario.do',
+                            success: function (processos) {
+                                if (processos === '[]') {
+                                    var json = [{'id': 'sem_' + descricao, 'text': dict['pastadigital.arvore.msg.nao.ha'] + ' ' + descricao + ' ' + dict['pastadigital.arvore.msg.com.pasta.digital'], 'children': false, 'icon': false}]
+                                } else {
+                                    var json = $.parseJSON(processos);
+                                    $.each(json, function (index, value) {
+                                        value.children = true;
+                                        value.icon = false;
+                                        value.text = '<span aria-label="' + dict["pastadigital.arvore.label.autos.processo"] + ' ' + descricao + ' ' + value.text + '.">' + value.text + '</span> <img id="' + value.cdProcesso + '" src="imagens/pasta/abrirPasta.png" title="'+ dict["pastadigital.titulo.abrir.pasta.processo"] +'" onclick="abrirPastaDigital($(this));"/>'
+                                    })
+                                }
+                                cb(json);
+                            },
+                            cache: false,
+                            crossDomain: true,
+                            xhrFields: {
+                                withCredentials: true
+                            },
+                            data: {
+                                numeroProcesso: $nuProcesso,
+                                cdProcesso: cdProcesso,
+                                tipo: tipo
+                            }
+                        });
+                    } else {
+                        ajaxObterDocumentos(node, cb);
+                    }
+                }
+            },
+            plugins: ['wholerow', 'parse_json_null']
+        }).on('select_node.jstree', function (e, data) {
+            if (isDocumentoMidiaDigital(data.node.original)) {
+                baixarMidia(data.node.original.urlMidiaDigital);
+            } else if (!data.node.original.id.indexOf('pagina')) {
+                validarAberturaIntimacaoNaoRecebida(e, this, data.node.original)
+                bloquearBotoesAnteriorEPrimeiraPagina();
+                bloquearBotoesPosteriorEUltimaPagina();
+            }
+        }).on('after_open.jstree', function () {
+            $.saj.pasta.adicionarAtributosAcessibilidade();
+        });
+    };
+
+    gerarArvoreDependente($jsTreeDependentes, 'dependente', 'D', 'Dependentes');
+    gerarArvoreDependente($jsTreeApensos, 'apenso', 'A', $.saj.pasta.descricaoApenso);
+
+    var ajaxObterDocumentos = function (node, cb) {
+        $.ajax({
+            url: getUrlCpo() + '/obterAcessoDoUsuario.do',
+            success: function (documentos) {
+                if(documentos === ''){
+                    $.saj.popupModal($('#popupSenha'), {
+                        mostrarBotaoFechar: false,
+                        titulo: dict['pastadigital.arvore.titulo.digite.senha.processo'],
+                        altura: '230',
+                        largura: '480',
+                        antesDeMostrarPopup: function() {
+                            $('#div-conteudo').attr('aria-hidden','true');
+                            var $senhaProcesso = $('#senhaProcesso');
+                            $senhaProcesso.val('');
+                            $senhaProcesso.attr('aria-label', dict['pastadigital.arvore.label.senha.processo']).focus();
+                        },
+                        onBeforeClosePopupModal: function() {
+                            $('#div-conteudo').attr('aria-hidden','false');
+                        }
+                    });
+                    $('#conteudoAvisoSenhaIncorreta').hide();
+                    $('#botaoEnviarSenha').click(function(){
+                        validarSenhaProcesso(node, cb);
+                    });
+                    $('#botaoFecharPopupSenha').click(function(){
+                        $.saj.closePopupModal();
+                        cb(false);
+                    });
+                    return;
+                }
+                cb($.parseJSON(documentos));
+            },
+            crossDomain: true,
+            xhrFields: {
+                withCredentials: true
+            },
+            data: {
+                cdProcesso: node.original.cdProcesso,
+                nuProcesso: $nuProcesso,
+                origemDoc : $origemDocumento,
+                recursosAutorizados: node.original.recursosAutorizado,
+                instancia: getInstancia()
+            }
+        });
+    }
+
+    var validarSenhaProcesso = function(node, cb) {
+        $.ajax ({
+            type: 'POST',
+			url: getUrlCpo() + '/validarSenhaProcessoPastaDigital.do',
+            data: {
+                senhaDoProcessoDigitada: $('#senhaProcesso').val(),
+                cdProcesso: node.original.cdProcesso
+            },
+            success: function (recursosAutorizados) {
+                $.saj.closePopupModal();
+
+                node.original.recursosAutorizado = recursosAutorizados;
+
+                $.ajax({
+		        	url: window.saj.pasta.urlPasta + '/obterDocumentos.do',
+		            success: function (documentos) {
+		                cb($.parseJSON(documentos));
+		            },
+		            data: {
+		                cdProcesso: node.original.cdProcesso,
+		                origemDocumento : $origemDocumento,
+		                recursosAutorizados: node.original.recursosAutorizado,
+		                instancia: getInstancia()
+		            }
+		        });
+			},
+			error:function() {
+				definirMensagemErroSenha(arguments[0].responseText);
+				$('#conteudoAvisoSenhaIncorreta').show();
+			}
+		});
+	};
+
+	var definirMensagemErroSenha = function(erro){
+		var msg = erro === 'senhaExpirada' ? dict['pastadigital.arvore.msg.senha.processo.expirada'] : dict['pastadigital.arvore.msg.senha.processo.invalida'];
+		$('#mensagemErroSenha').html(msg);
+	}
+
+    /**
+     * Extrai um mapa [idDocumento: parametros/searchURL] dos documentos (páginas)
+     * selecionados em uma `jstree`
+     *
+     * @param    {jstree}    arvore    Objeto {jstree} da árvore de documentos a ser inspecionado
+     * @param	 {Object}    mapa      Objeto (mapa) opcional a ser extendido com os itens da árvore recebida
+     * @return    {Object}    Mapa de documentos selecionados com key = idDocumento, value = parametros
+     */
+    function obterItensSelecionados(arvore, mapa) {
+        var mapaSelecionados = mapa || {};
+
+        $.each(arvore.get_checked(), function(key, value) {
+            if (_.startsWith(value,'pagina')) {
+                var nodo = arvore.get_node(value);
+                var original = nodo.original;
+                if (original.sigiloAbsoluto) {
+                    return;
+                }
+                var parametros = original.parametros;
+                var idDocumento = getURLParameter(parametros, 'idDocumento');
+
+                mapaSelecionados[idDocumento] = parametros;
+            }
+        });
+
+        return mapaSelecionados;
+    }
+
+
+    var obterMapaDocumentosSelecionados = function() {
+        var mapaSelecionados;
+
+        mapaSelecionados = obterItensSelecionados($jsTreePrincipal.jstree(true));
+        mapaSelecionados = obterItensSelecionados($jsTreeSigilosos.jstree(true), mapaSelecionados);
+
+        return mapaSelecionados;
+    }
+
+    $.saj.pasta.ehPrimeiraPagina = ehPrimeiraPagina;
+    $.saj.pasta.ehUltimaPagina = ehUltimaPagina;
+    $.saj.pasta.obterMapaDocumentosSelecionados = obterMapaDocumentosSelecionados
+    $.saj.pasta.getURLParameter = getURLParameter;
+    $.saj.pasta.obterUrlDocumento = obterUrlDocumento;
+
+});

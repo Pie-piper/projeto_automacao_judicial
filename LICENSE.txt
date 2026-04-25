@@ -1,0 +1,15 @@
+END USER LICENSE AGREEMENT (EULA)
+
+This End-User License Agreement ("EULA") is a legal agreement between you and the Author of "RPV Automação Judicial".
+
+1. GRANT OF LICENSE
+The Author grants you a personal, non-exclusive, non-transferable license to install and use the Software.
+
+2. RESTRICTIONS
+You may not reverse engineer, decompile, or disassemble the Software.
+
+3. TERMINATION
+This license is effective until terminated. Your rights under this license will terminate automatically without notice if you fail to comply with any of its terms.
+
+4. DISCLAIMER
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

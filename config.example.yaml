@@ -1,0 +1,17 @@
+# ARQUIVO DE EXEMPLO - Renomeie para config.yaml e preencha seus dados
+credenciais:
+  login: "seu_cpf_aqui"
+  senha: "sua_senha_aqui"
+
+email:
+  user: "seu_email@empresa.com"
+  password: "sua_senha_app_email"
+  imap_server: "mail.seuprovedor.com.br"
+
+atualizacao:
+  github_user: "SeuUsuario"
+  github_repo: "projeto_automacao_judicial"
+
+caminhos:
+  poppler_path: "C:\\Caminho\\Para\\Poppler\\bin"
+  tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"

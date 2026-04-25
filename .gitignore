@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Sensitive Config Files (CRITICAL for Public Repo)
+.env
+config.yaml
+config_externa.yaml
+
+# Build and Distribution
+build/
+dist/
+*.spec
+*.exe
+
+# Logs and Debug
+*.log
+logs/
+debug_*.png
+debug_*.html
+
+# Data and Process Folders
+processos/
+downloads/
+temp/
+01_Peticionados_*/
+Peticionado_*/
+
+# Automation / Playwright
+browsers/
+.playwright/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Scripts
+*.bat
+*.sh
