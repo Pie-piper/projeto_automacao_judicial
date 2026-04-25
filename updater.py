@@ -67,7 +67,10 @@ def run_updater():
             time.sleep(10)
 
     except Exception as e:
-        print(f"ERRO CRITICO DURANTE A SUBSTITUICAO: {e}")
+        msg_erro = f"ERRO CRITICO DURANTE A SUBSTITUICAO: {e}"
+        print(msg_erro)
+        with open("log_updater.txt", "a") as log:
+            log.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg_erro}\n")
         print("Por favor, tente rodar o instalador manualmente.")
         time.sleep(20)
 

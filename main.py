@@ -53,7 +53,7 @@ def main():
             if tem_update:
                 temp_interface = TkinterInterface()
                 if temp_interface.mostrar_confirmacao("Atualização Disponível", f"Nova versão {info['version']}!"):
-                    dest = config.BASE_DIR / "update_novo.exe"
+                    dest = config.TEMP_DIR / "update_novo.exe"
                     if update_mgr.download_update(info['url'], dest):
                         if update_mgr.launch_updater():
                             sys.exit(0)

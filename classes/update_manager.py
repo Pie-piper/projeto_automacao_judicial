@@ -83,15 +83,27 @@ class UpdateManager:
         if updater_exe.exists():
             main_exe = sys.executable
             # O novo executável é baixado para a pasta temp definida no config (AppData)
-            new_exe = config.TEMP_DIR / "update_novo.exe"
+            # Tentar encontrar o novo executável em ambos os caminhos possíveis (Correção de compatibilidade)
+            new_exe_temp = config.TEMP_DIR / "update_novo.exe"
+            new_exe_base = config.BASE_DIR / "update_novo.exe"
+            
+            if new_exe_temp.exists():
+                new_exe = new_exe_temp
+            elif new_exe_base.exists():
+                new_exe = new_exe_base
+            else:
+                # Se não achar em nenhum, usa o padrão do TEMP mas avisa
+                new_exe = new_exe_temp
+                print(f"AVISO: update_novo.exe não encontrado em {new_exe_temp} nem {new_exe_base}")
             
             if "python" in main_exe.lower():
                 print("Modo dev: Updater ignorado.")
                 return False
 
             print(f"Invocando updater: {updater_exe}")
-            # subprocess.Popen para não bloquear e permitir que o main feche
-            subprocess.Popen([str(updater_exe), str(main_exe), str(new_exe)], 
+            # Usar aspas para suportar caminhos com espaços no Windows
+            comando = f'"{updater_exe}" "{main_exe}" "{new_exe}"'
+            subprocess.Popen(comando, 
                             cwd=str(pasta_exe),
                             shell=True)
             return True
