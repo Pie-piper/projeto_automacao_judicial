@@ -28,16 +28,18 @@ logs/
 debug_*.png
 debug_*.html
 
+# Automation / Playwright
+browsers/
+browser_profile/
+.playwright/
+
 # Data and Process Folders
 processos/
 downloads/
 temp/
+screenshots_erro/
 01_Peticionados_*/
 Peticionado_*/
-
-# Automation / Playwright
-browsers/
-.playwright/
 
 # OS Files
 .DS_Store
