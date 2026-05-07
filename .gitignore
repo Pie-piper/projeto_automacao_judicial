@@ -15,12 +15,17 @@ venv.bak/
 .env
 config.yaml
 config_externa.yaml
+example.env
+example.yaml
 
 # Build and Distribution
 build/
 dist/
 *.spec
 *.exe
+*.txt
+!requirements.txt
+!README.txt
 
 # Logs and Debug
 *.log
@@ -37,6 +42,8 @@ browser_profile/
 processos/
 downloads/
 temp/
+tests/
+docs/
 screenshots_erro/
 01_Peticionados_*/
 Peticionado_*/
